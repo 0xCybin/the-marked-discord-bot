@@ -190,20 +190,71 @@ process.on("SIGTERM", () => {
 // Keep-alive server for free hosting platforms
 const http = require("http");
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end(
-    `The Marked Bot is running!\nUptime: ${Math.floor(
-      process.uptime()
-    )} seconds\nLast restart: ${new Date().toISOString()}`
+  console.log(
+    `[${new Date().toISOString()}] HTTP request received: ${req.url}`
   );
+  res.writeHead(200, {
+    "Content-Type": "text/html",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  const status = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>The Marked Bot Status</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px; }
+        .status { background: #2a2a2a; padding: 20px; border-radius: 10px; display: inline-block; }
+        .online { color: #4CAF50; }
+    </style>
+</head>
+<body>
+    <div class="status">
+        <h1>🔮 The Marked Bot</h1>
+        <p class="online">✅ Bot Status: ${
+          client.isReady() ? "Online & Connected" : "Starting..."
+        }</p>
+        <p>⏱️ Uptime: ${Math.floor(process.uptime())} seconds</p>
+        <p>🕐 Last Restart: ${new Date().toISOString()}</p>
+        <p>📊 Monitoring: ${
+          client.guilds ? client.guilds.cache.size : 0
+        } server(s)</p>
+        <p>🌐 Server Time: ${new Date().toLocaleString()}</p>
+    </div>
+</body>
+</html>`;
+
+  res.end(status);
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(
     `[${new Date().toISOString()}] Keep-alive server running on port ${PORT}`
   );
 });
+
+// Self-ping to prevent sleeping (every 14 minutes)
+setInterval(() => {
+  const url = `https://the-marked-discord-bot.onrender.com`;
+  console.log(`[${new Date().toISOString()}] Self-ping to prevent sleeping...`);
+
+  // Simple HTTP request to keep alive
+  const https = require("https");
+  https
+    .get(url, (res) => {
+      console.log(
+        `[${new Date().toISOString()}] Self-ping successful: ${res.statusCode}`
+      );
+    })
+    .on("error", (err) => {
+      console.log(
+        `[${new Date().toISOString()}] Self-ping failed:`,
+        err.message
+      );
+    });
+}, 14 * 60 * 1000); // 14 minutes
 
 // Login with token from environment variable or fallback
 const token = process.env.DISCORD_TOKEN || process.env.BOT_TOKEN;
