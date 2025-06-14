@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "main": "src/bot.js",
   "scripts": {
-    "start": "node src/bot.js",
+    "start": "node fix-missing-tables.js && node src/bot.js",
     "dev": "node --inspect src/bot.js",
     "setup-db": "node scripts/setup-database.js",
     "lint": "eslint src/",
