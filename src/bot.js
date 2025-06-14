@@ -1,5 +1,5 @@
 // FILE: src/bot.js
-// PURPOSE: Main bot entry point with FIXED DM intents
+// PURPOSE: Main bot entry point - simplified and modular
 // ========================================
 
 const { Client, GatewayIntentBits } = require("discord.js");
@@ -20,7 +20,7 @@ class ARGDiscordBot {
   }
 
   /**
-   * Initializes the Discord client with required intents INCLUDING DM support
+   * Initializes the Discord client with required intents
    */
   initializeClient() {
     logger.info("🤖 Initializing Discord client...");
@@ -32,16 +32,10 @@ class ARGDiscordBot {
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences, // Required for enhanced data collection
-        GatewayIntentBits.DirectMessages, // 🔥 THIS WAS MISSING!
-        GatewayIntentBits.DirectMessageReactions, // Also useful for DM interactions
-      ],
-      partials: [
-        "CHANNEL", // Required to receive DMs
-        "MESSAGE", // Required to receive DM messages
       ],
     });
 
-    logger.info("✅ Discord client initialized with DM support enabled");
+    logger.info("✅ Discord client initialized with required intents");
   }
 
   /**
@@ -73,7 +67,7 @@ class ARGDiscordBot {
       logger.info("🔗 Connecting to Discord...");
       await this.client.login(config.discord.token);
 
-      logger.info("✅ ARG Discord Bot started successfully with DM support");
+      logger.info("✅ ARG Discord Bot started successfully");
     } catch (error) {
       logger.error("❌ Bot startup failed:", error);
       await this.shutdown(1);

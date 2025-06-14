@@ -1,21 +1,39 @@
 {
-  "name": "mydiscordbot",
-  "version": "1.0.0",
-  "main": "bot.js",
+  "name": "discord-arg-bot",
+  "version": "2.0.0",
+  "main": "src/bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/bot.js",
+    "dev": "node --inspect src/bot.js",
+    "setup-db": "node scripts/setup-database.js",
+    "lint": "eslint src/",
+    "clean": "rm -rf node_modules package-lock.json && npm install"
   },
-  "keywords": [],
+  "keywords": [
+    "discord",
+    "bot",
+    "arg",
+    "alternate-reality-game",
+    "ai"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "description": "",
+  "description": "ARG Discord Bot with Enhanced Data Collection and AI Integration",
   "dependencies": {
     "discord.js": "^14.19.3",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "pg": "^8.11.3",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
   },
   "engines": {
     "node": "18.x"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xCybin/the-marked-discord-bot.git"
   }
 }
