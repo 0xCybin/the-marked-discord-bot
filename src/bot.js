@@ -8,6 +8,8 @@ const database = require("./config/database");
 const eventHandler = require("./events");
 const logger = require("./utils/logger");
 const keepAlive = require("./utils/keep-alive");
+// ADDED: Import onboarding system for client reference
+const onboardingSystem = require("./services/onboardingSystem");
 
 /**
  * Main Discord bot class for ARG operations
@@ -33,6 +35,17 @@ class ARGDiscordBot {
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences, // Required for enhanced data collection
       ],
+    });
+
+    // ADDED: Set up ready event to configure onboarding system
+    this.client.once("ready", () => {
+      logger.info(`✅ Bot logged in as ${this.client.user.tag}`);
+
+      // CRITICAL: Set client reference for onboarding system
+      onboardingSystem.setClient(this.client);
+      logger.info("🔗 Client reference set for onboarding system");
+
+      logger.info("🎮 ARG Discord Bot is fully operational");
     });
 
     logger.info("✅ Discord client initialized with required intents");

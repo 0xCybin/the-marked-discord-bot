@@ -1,6 +1,6 @@
 // ========================================
 // FILE: src/commands/onboardingCommands.js
-// PURPOSE: Complete admin commands for ARG onboarding system management - FINAL VERSION
+// PURPOSE: Complete admin commands for ARG onboarding system management - FIXED VERSION
 // ========================================
 
 const database = require("../config/database");
@@ -8,7 +8,7 @@ const logger = require("../utils/logger");
 const onboardingSystem = require("../services/onboardingSystem");
 
 /**
- * Complete admin commands for ARG onboarding system management
+ * Complete admin commands for ARG onboarding system management with duplicate prevention
  */
 class OnboardingCommands {
   /**
@@ -62,17 +62,28 @@ class OnboardingCommands {
           ? Math.round(sessionStats.avg_questions_completed * 10) / 10
           : 0
       }/9\n`;
+      response += `• Observer Detection Rate: ${
+        sessionStats.completed_sessions > 0
+          ? Math.round(
+              (sessionStats.observer_sessions /
+                sessionStats.completed_sessions) *
+                100
+            )
+          : 0
+      }%\n\n`;
 
-      if (sessionStats.last_session) {
-        response += `• Last Session: ${new Date(
-          sessionStats.last_session
-        ).toLocaleDateString()}\n`;
-      }
+      response += `**📅 Activity:**\n`;
+      response += `• Last Session: ${
+        sessionStats.last_session
+          ? new Date(sessionStats.last_session).toLocaleString()
+          : "Never"
+      }\n\n`;
 
-      response += `\n**💡 Quick Actions:**\n`;
-      response += `• \`!incomplete-onboarding\` - See stalled sessions\n`;
-      response += `• \`!failed-dm-onboarding\` - See DM delivery issues\n`;
-      response += `• \`!recent-onboarding 10\` - See recent activity`;
+      response += `**🔧 Admin Commands:**\n`;
+      response += `• \`!recent-onboarding [limit]\` - Recent sessions\n`;
+      response += `• \`!failed-dm-onboarding\` - Show DM failures\n`;
+      response += `• \`!force-onboarding @user\` - Force start assessment\n`;
+      response += `• \`!reset-onboarding @user\` - Reset user session`;
 
       await message.reply(response);
     } catch (error) {
@@ -82,86 +93,26 @@ class OnboardingCommands {
   }
 
   /**
-   * Shows incomplete onboarding sessions
-   * Usage: !incomplete-onboarding
-   */
-  async handleIncompleteOnboarding(message) {
-    try {
-      const result = await database.executeQuery(
-        `
-        SELECT 
-          user_id,
-          current_question,
-          started_at,
-          dm_failed
-        FROM onboarding_sessions 
-        WHERE guild_id = $1 AND completed = FALSE
-        ORDER BY started_at DESC
-        LIMIT 15
-      `,
-        [message.guild.id]
-      );
-
-      if (result.rows.length === 0) {
-        await message.reply("✅ No incomplete onboarding sessions found!");
-        return;
-      }
-
-      let response = `**🔄 Incomplete Onboarding Sessions (${result.rows.length}):**\n\n`;
-
-      for (const session of result.rows) {
-        try {
-          const member = await message.guild.members.fetch(session.user_id);
-          const memberName = member ? member.user.username : "Unknown User";
-          const startedDate = new Date(session.started_at).toLocaleDateString();
-          const dmStatus = session.dm_failed ? "❌ DM Failed" : "✅ DM Sent";
-
-          response += `**${memberName}** (\`${session.user_id}\`)\n`;
-          response += `• Progress: Question ${session.current_question}/9\n`;
-          response += `• Started: ${startedDate}\n`;
-          response += `• Status: ${dmStatus}\n`;
-          response += `• Action: \`!force-onboarding @${memberName}\`\n\n`;
-        } catch (fetchError) {
-          response += `**Unknown User** (\`${session.user_id}\`)\n`;
-          response += `• Progress: Question ${session.current_question}/9\n`;
-          response += `• Status: Member may have left\n\n`;
-        }
-      }
-
-      response += `**💡 Tip:** Use \`!reset-onboarding @user\` to restart a stalled session.`;
-
-      await message.reply(response);
-    } catch (error) {
-      logger.error("Error in incomplete-onboarding command:", error);
-      await message.reply(
-        "❌ Failed to retrieve incomplete onboarding sessions."
-      );
-    }
-  }
-
-  /**
-   * Shows members who couldn't receive onboarding DMs
+   * Shows sessions where DM delivery failed
    * Usage: !failed-dm-onboarding
    */
-  async handleFailedDMOnboarding(message, args) {
+  async handleFailedDMOnboarding(message) {
     try {
       const result = await database.executeQuery(
         `
-        SELECT 
-          user_id,
-          started_at,
-          dm_failed_at,
-          completed
+        SELECT user_id, started_at, completed, dm_failed_at 
         FROM onboarding_sessions 
-        WHERE guild_id = $1 AND (dm_failed = TRUE OR dm_failed_at IS NOT NULL)
-        ORDER BY started_at DESC
+        WHERE guild_id = $1 AND dm_failed = TRUE 
+        ORDER BY dm_failed_at DESC 
         LIMIT 20
       `,
         [message.guild.id]
       );
 
       if (result.rows.length === 0) {
-        await message.reply("✅ No failed DM deliveries found!");
+        await message.reply(
+          "✅ No failed DM onboarding sessions found. All users successfully received their assessment DMs."
+        );
         return;
       }
 
@@ -282,102 +233,81 @@ class OnboardingCommands {
         return;
       }
 
-      const result = await database.executeQuery(
+      const sessions = await database.executeQuery(
         `
-        SELECT * FROM onboarding_sessions 
-        WHERE user_id = $1 AND guild_id = $2 
-        ORDER BY started_at DESC 
-        LIMIT 1
+        SELECT id, completed, started_at, completed_at, current_question, 
+               personality_scores, is_observer, responses
+        FROM onboarding_sessions 
+        WHERE user_id = $1 AND guild_id = $2
+        ORDER BY started_at DESC
+        LIMIT 5
       `,
         [mentionedUser.id, message.guild.id]
       );
 
-      if (result.rows.length === 0) {
+      if (sessions.rows.length === 0) {
         await message.reply(
-          `📭 No onboarding sessions found for ${mentionedUser.username}.`
+          `📭 **No onboarding history for ${mentionedUser.username}**\n\n` +
+            `Use \`!force-onboarding @${mentionedUser.username}\` to start their assessment.`
         );
         return;
       }
 
-      const session = result.rows[0];
-      let response = `**🔍 Onboarding Details for ${mentionedUser.username}:**\n\n`;
+      let statusMessage = `📊 **Onboarding Status for ${mentionedUser.username}**\n\n`;
 
-      response += `**📊 Session Status:**\n`;
-      response += `• Progress: ${session.current_question}/9 questions\n`;
-      response += `• Completed: ${session.completed ? "✅ Yes" : "❌ No"}\n`;
-      response += `• Observer: ${session.is_observer ? "🔍 Yes" : "🎭 No"}\n`;
-      response += `• DM Failed: ${session.dm_failed ? "❌ Yes" : "✅ No"}\n`;
-      response += `• Started: ${new Date(
-        session.started_at
-      ).toLocaleDateString()}\n`;
+      sessions.rows.forEach((session, index) => {
+        const isLatest = index === 0;
+        const responses = JSON.parse(session.responses || "[]");
 
-      if (session.completed) {
-        response += `• Completed: ${new Date(
-          session.completed_at
-        ).toLocaleDateString()}\n`;
-        response += `• Generated Name: **\`${session.generated_nickname}\`**\n`;
-      }
+        statusMessage += `${isLatest ? "🔵" : "⚪"} **Session ${session.id}** ${
+          isLatest ? "(Latest)" : ""
+        }\n`;
+        statusMessage += `   📅 Started: ${new Date(
+          session.started_at
+        ).toLocaleString()}\n`;
+        statusMessage += `   ✅ Status: ${
+          session.completed ? "Completed" : "In Progress"
+        }\n`;
+        statusMessage += `   📊 Progress: ${session.current_question}/9 questions\n`;
 
-      // Parse and display psychological profile
-      if (session.personality_scores && session.completed) {
-        try {
-          const scores = JSON.parse(session.personality_scores);
-          const dominantTrait =
-            Object.keys(scores).length > 0
-              ? Object.keys(scores).reduce((a, b) =>
-                  (scores[a] || 0) > (scores[b] || 0) ? a : b
-                )
-              : "unknown";
-
-          response += `\n**🧠 Psychological Profile:**\n`;
-          response += `• Seeker: ${scores.seeker || 0} | Isolated: ${
-            scores.isolated || 0
+        if (session.completed) {
+          statusMessage += `   🎯 Completed: ${new Date(
+            session.completed_at
+          ).toLocaleString()}\n`;
+          statusMessage += `   👁️ Observer: ${
+            session.is_observer ? "Yes" : "No"
           }\n`;
-          response += `• Aware: ${scores.aware || 0} | Lost: ${
-            scores.lost || 0
+        } else {
+          statusMessage += `   ⏱️ Last Activity: ${
+            responses.length > 0
+              ? new Date(
+                  responses[responses.length - 1].timestamp
+                ).toLocaleString()
+              : "No responses yet"
           }\n`;
-          response += `• **Dominant Trait:** ${this.getTraitDescription(
-            dominantTrait
-          )}\n`;
-        } catch (e) {
-          response += `\n**🧠 Psychological Profile:** *Error parsing data*\n`;
         }
+
+        statusMessage += "\n";
+      });
+
+      const latestSession = sessions.rows[0];
+      if (!latestSession.completed) {
+        statusMessage += `**🔧 Actions Available:**\n`;
+        statusMessage += `• \`!reset-onboarding @${mentionedUser.username}\` - Start over\n`;
+        statusMessage += `• Contact user to check their DMs for the assessment`;
       }
 
-      // Parse and display responses
-      if (session.responses && session.completed) {
-        try {
-          const responses = JSON.parse(session.responses);
-          if (responses.length > 0) {
-            response += `\n**📝 Response Summary:**\n`;
-            const yesCount = responses.filter((r) => r.answer === "yes").length;
-            const maybeCount = responses.filter(
-              (r) => r.answer === "maybe"
-            ).length;
-            const noCount = responses.filter((r) => r.answer === "no").length;
-
-            response += `• Yes: ${yesCount} | Sometimes: ${maybeCount} | No: ${noCount}\n`;
-          }
-        } catch (e) {
-          // Skip response details if parsing fails
-        }
-      }
-
-      // Show Observer response if available
-      if (session.observer_response) {
-        response += `\n**🔍 Observer Response:**\n`;
-        response += `• Favorite Color: "${session.observer_response}"\n`;
-      }
-
-      await message.reply(response);
+      await message.reply(statusMessage);
     } catch (error) {
-      logger.error("Error in user-onboarding command:", error);
-      await message.reply("❌ Failed to retrieve user onboarding details.");
+      logger.error("Error checking user onboarding:", error);
+      await message.reply(
+        `❌ Failed to check onboarding status: ${error.message}`
+      );
     }
   }
 
   /**
-   * Forces onboarding to start for a user (admin override)
+   * FIXED: Forces onboarding to start for a user (admin override) - Prevents duplicates
    * Usage: !force-onboarding @user
    */
   async handleForceOnboarding(message, args) {
@@ -388,10 +318,10 @@ class OnboardingCommands {
         return;
       }
 
-      // Check if user already has an active session
+      // FIXED: More thorough check for existing sessions (without dm_sent column)
       const existingSession = await database.executeQuery(
         `
-        SELECT id, completed 
+        SELECT id, completed, started_at, current_question
         FROM onboarding_sessions 
         WHERE user_id = $1 AND guild_id = $2 
         ORDER BY started_at DESC 
@@ -400,14 +330,34 @@ class OnboardingCommands {
         [mentionedUser.id, message.guild.id]
       );
 
-      if (
-        existingSession.rows.length > 0 &&
-        !existingSession.rows[0].completed
-      ) {
-        await message.reply(
-          `⚠️ ${mentionedUser.username} already has an active onboarding session. Use \`!reset-onboarding @${mentionedUser.username}\` to restart it.`
-        );
-        return;
+      // FIXED: Handle existing sessions properly
+      if (existingSession.rows.length > 0) {
+        const session = existingSession.rows[0];
+
+        if (!session.completed) {
+          // There's an active session
+          await message.reply(
+            `⚠️ **${mentionedUser.username} already has an active onboarding session!**\n\n` +
+              `📊 Progress: Question ${session.current_question}/9\n` +
+              `📅 Started: ${new Date(
+                session.started_at
+              ).toLocaleString()}\n\n` +
+              `**Options:**\n` +
+              `• Use \`!reset-onboarding @${mentionedUser.username}\` to restart\n` +
+              `• Use \`!user-onboarding @${mentionedUser.username}\` to check details`
+          );
+          return;
+        } else {
+          // Session is completed
+          await message.reply(
+            `✅ **${mentionedUser.username} has already completed onboarding!**\n\n` +
+              `📅 Completed: ${new Date(
+                session.started_at
+              ).toLocaleString()}\n\n` +
+              `Use \`!reset-onboarding @${mentionedUser.username}\` if you want them to retake it.`
+          );
+          return;
+        }
       }
 
       // Get guild member object
@@ -417,26 +367,61 @@ class OnboardingCommands {
         return;
       }
 
-      // Force start onboarding
-      const success = await onboardingSystem.initiateOnboarding(member);
+      // FIXED: Use the forced flag to prevent duplicates
+      logger.info(`🚀 Force-starting onboarding for ${mentionedUser.username}`);
+
+      const success = await onboardingSystem.initiateOnboarding(member, true); // Force flag = true
 
       if (success) {
         await message.reply(
-          `✅ **Forced onboarding started for ${mentionedUser.username}!**\n\nThe user should receive a DM with the psychological assessment. If they don't receive it, their DMs may be disabled.`
+          `✅ **Forced onboarding started for ${mentionedUser.username}!**\n\n` +
+            `📨 Assessment DM sent successfully\n` +
+            `🔮 Enhanced 9-question assessment with Observer detection\n` +
+            `📊 Progress can be tracked with \`!user-onboarding @${mentionedUser.username}\``
+        );
+
+        logger.argEvent(
+          "force-onboarding-success",
+          `Successfully force-started onboarding for ${mentionedUser.username}`
         );
       } else {
         await message.reply(
-          `⚠️ **Onboarding started but DM failed for ${mentionedUser.username}!**\n\nThe user likely has DMs disabled. They need to:\n1. Enable "Allow direct messages from server members"\n2. Try the assessment again`
+          `⚠️ **Onboarding session created but DM failed for ${mentionedUser.username}!**\n\n` +
+            `❌ The user likely has DMs disabled\n\n` +
+            `**User needs to:**\n` +
+            `1. Enable "Allow direct messages from server members" in Privacy Settings\n` +
+            `2. Use \`!reset-onboarding @${mentionedUser.username}\` to try again\n\n` +
+            `**Alternative:** Check session status with \`!user-onboarding @${mentionedUser.username}\``
+        );
+
+        logger.argEvent(
+          "force-onboarding-dm-failed",
+          `Force onboarding created session but DM failed for ${mentionedUser.username}`
         );
       }
     } catch (error) {
       logger.error("Error in force-onboarding command:", error);
-      await message.reply(`❌ Failed to force onboarding: ${error.message}`);
+
+      // FIXED: Better error reporting
+      if (error.message.includes("duplicate key")) {
+        await message.reply(
+          `❌ **Duplicate session detected for ${mentionedUser.username}!**\n\n` +
+            `This usually means there's already an active session.\n` +
+            `Use \`!reset-onboarding @${mentionedUser.username}\` first, then try again.`
+        );
+      } else {
+        await message.reply(
+          `❌ **Failed to force onboarding:** ${error.message}\n\n` +
+            `Please try:\n` +
+            `1. \`!reset-onboarding @${mentionedUser.username}\`\n` +
+            `2. \`!force-onboarding @${mentionedUser.username}\` (retry)`
+        );
+      }
     }
   }
 
   /**
-   * Resets a user's onboarding session
+   * FIXED: Enhanced reset onboarding with better cleanup
    * Usage: !reset-onboarding @user
    */
   async handleResetOnboarding(message, args) {
@@ -449,75 +434,173 @@ class OnboardingCommands {
         return;
       }
 
-      // Delete existing sessions
-      const deleteResult = await database.executeQuery(
+      // FIXED: Get session details first for better reporting
+      const existingSessions = await database.executeQuery(
         `
-        DELETE FROM onboarding_sessions 
+        SELECT id, completed, started_at, current_question
+        FROM onboarding_sessions 
         WHERE user_id = $1 AND guild_id = $2
-        RETURNING id
+        ORDER BY started_at DESC
       `,
         [mentionedUser.id, message.guild.id]
       );
 
-      const sessionCount = deleteResult.rows.length;
-
-      if (sessionCount === 0) {
+      if (existingSessions.rows.length === 0) {
         await message.reply(
-          `📭 No onboarding sessions found for ${mentionedUser.username}.`
+          `📭 **No onboarding sessions found for ${mentionedUser.username}.**\n\n` +
+            `You can directly use \`!force-onboarding @${mentionedUser.username}\` to start fresh.`
         );
         return;
       }
 
+      // Delete all sessions for this user
+      const deleteResult = await database.executeQuery(
+        `
+        DELETE FROM onboarding_sessions 
+        WHERE user_id = $1 AND guild_id = $2
+        RETURNING id, completed
+      `,
+        [mentionedUser.id, message.guild.id]
+      );
+
+      const deletedCount = deleteResult.rows.length;
+      const completedCount = deleteResult.rows.filter(
+        (s) => s.completed
+      ).length;
+      const activeCount = deletedCount - completedCount;
+
       await message.reply(
-        `✅ **Reset complete for ${mentionedUser.username}!**\n\n• Removed ${sessionCount} session(s)\n• User can now start fresh onboarding\n\nUse \`!force-onboarding @${mentionedUser.username}\` to restart their assessment.`
+        `✅ **Reset complete for ${mentionedUser.username}!**\n\n` +
+          `🗑️ Deleted ${deletedCount} session(s):\n` +
+          `   • ${completedCount} completed\n` +
+          `   • ${activeCount} active/incomplete\n\n` +
+          `🚀 Ready for fresh onboarding with \`!force-onboarding @${mentionedUser.username}\``
+      );
+
+      logger.argEvent(
+        "reset-onboarding-success",
+        `Reset ${deletedCount} sessions for ${mentionedUser.username} (${completedCount} completed, ${activeCount} active)`
       );
     } catch (error) {
       logger.error("Error in reset-onboarding command:", error);
-      await message.reply(`❌ Failed to reset onboarding: ${error.message}`);
+      await message.reply(
+        `❌ **Failed to reset onboarding:** ${error.message}\n\n` +
+          `Please contact an administrator if this persists.`
+      );
     }
   }
 
   /**
-   * Tests if a nickname is unique in the guild
-   * Usage: !test-nickname-unique "nickname"
+   * Shows incomplete onboarding sessions
+   * Usage: !incomplete-onboarding
    */
-  async handleTestNicknameUnique(message, args) {
+  async handleIncompleteOnboarding(message) {
     try {
-      const nickname = args.slice(1).join(" ").replace(/['"]/g, "");
+      const result = await database.executeQuery(
+        `
+        SELECT user_id, current_question, started_at, dm_failed
+        FROM onboarding_sessions 
+        WHERE guild_id = $1 AND completed = FALSE 
+        ORDER BY started_at DESC 
+        LIMIT 20
+      `,
+        [message.guild.id]
+      );
 
-      if (!nickname) {
+      if (result.rows.length === 0) {
         await message.reply(
-          '❌ Please provide a nickname to test.\n\nUsage: `!test-nickname-unique "SUBJ-A1-SEEING-░"`'
+          "✅ No incomplete onboarding sessions found. All started assessments have been completed!"
         );
         return;
       }
 
-      // Check if nickname exists in current guild
-      const guild = message.guild;
-      const existingMember = guild.members.cache.find(
-        (member) => member.nickname === nickname
+      let response = `**🔄 Incomplete Onboarding Sessions (${result.rows.length}):**\n\n`;
+
+      for (const session of result.rows) {
+        try {
+          const member = await message.guild.members.fetch(session.user_id);
+          const memberName = member ? member.user.username : "Unknown User";
+          const startedDate = new Date(session.started_at).toLocaleDateString();
+          const dmStatus = session.dm_failed ? "❌ Failed" : "✅ Sent";
+
+          response += `**${memberName}** (\`${session.user_id}\`)\n`;
+          response += `• Progress: Question ${session.current_question}/9\n`;
+          response += `• Started: ${startedDate}\n`;
+          response += `• DM Status: ${dmStatus}\n`;
+          response += `• Action: \`!user-onboarding @${memberName}\`\n\n`;
+        } catch (fetchError) {
+          response += `**Unknown User** (\`${session.user_id}\`)\n`;
+          response += `• Progress: Question ${session.current_question}/9\n`;
+          response += `• Status: Member may have left server\n\n`;
+        }
+      }
+
+      response += `**💡 Tips:**\n`;
+      response += `• Use \`!user-onboarding @username\` for detailed status\n`;
+      response += `• Use \`!reset-onboarding @username\` to restart stalled sessions\n`;
+      response += `• Users with DM failures need to enable DMs and get re-invited`;
+
+      await message.reply(response);
+    } catch (error) {
+      logger.error("Error in incomplete-onboarding command:", error);
+      await message.reply("❌ Failed to retrieve incomplete sessions.");
+    }
+  }
+
+  /**
+   * Tests if a nickname is unique in the system
+   * Usage: !test-nickname-unique "nickname"
+   */
+  async handleTestNicknameUnique(message, args) {
+    try {
+      const nickname = args.slice(1).join(" ").replace(/["']/g, "");
+
+      if (!nickname) {
+        await message.reply(
+          '❌ Please provide a nickname to test. Usage: `!test-nickname-unique "TestName"`'
+        );
+        return;
+      }
+
+      // Check in onboarding sessions
+      const onboardingCheck = await database.executeQuery(
+        "SELECT user_id, generated_nickname FROM onboarding_sessions WHERE generated_nickname = $1",
+        [nickname]
       );
 
-      // Check if nickname exists in onboarding database
-      const dbResult = await database.executeQuery(
-        "SELECT user_id FROM onboarding_sessions WHERE generated_nickname = $1 AND guild_id = $2",
-        [nickname, guild.id]
+      // Check in ARG name assignments
+      const argCheck = await database.executeQuery(
+        "SELECT user_id, assigned_name FROM arg_name_assignments WHERE assigned_name = $1",
+        [nickname]
       );
 
-      let response = `**🔍 Nickname Uniqueness Test:**\n\n`;
-      response += `**Tested Nickname:** \`${nickname}\`\n\n`;
+      const isUnique =
+        onboardingCheck.rows.length === 0 && argCheck.rows.length === 0;
 
-      if (existingMember) {
-        response += `❌ **Already in use by:** ${existingMember.user.username}\n`;
-        response += `• User ID: \`${existingMember.user.id}\`\n`;
-        response += `• Status: Currently active\n`;
-      } else if (dbResult.rows.length > 0) {
-        response += `⚠️ **Found in database but not active**\n`;
-        response += `• User ID: \`${dbResult.rows[0].user_id}\`\n`;
-        response += `• Status: Previously assigned (user may have left)\n`;
+      let response = `**🔍 Nickname Uniqueness Test: "${nickname}"**\n\n`;
+
+      if (isUnique) {
+        response += `✅ **UNIQUE** - This nickname is available for use\n\n`;
+        response += `• Not found in onboarding sessions\n`;
+        response += `• Not found in ARG name assignments\n`;
+        response += `• Safe to assign to new users`;
       } else {
-        response += `✅ **Unique and available**\n`;
-        response += `• Status: This nickname can be safely used\n`;
+        response += `❌ **NOT UNIQUE** - This nickname is already in use\n\n`;
+
+        if (onboardingCheck.rows.length > 0) {
+          response += `**Found in Onboarding Sessions:**\n`;
+          onboardingCheck.rows.forEach((row) => {
+            response += `• User ID: \`${row.user_id}\`\n`;
+          });
+          response += `\n`;
+        }
+
+        if (argCheck.rows.length > 0) {
+          response += `**Found in ARG Name Assignments:**\n`;
+          argCheck.rows.forEach((row) => {
+            response += `• User ID: \`${row.user_id}\`\n`;
+          });
+        }
       }
 
       await message.reply(response);
@@ -526,22 +609,7 @@ class OnboardingCommands {
       await message.reply("❌ Failed to test nickname uniqueness.");
     }
   }
-
-  /**
-   * Gets trait description for display
-   * @param {string} trait - Trait name
-   * @returns {string} Trait description
-   */
-  getTraitDescription(trait) {
-    const descriptions = {
-      seeker: "Truth Seeker - Drawn to patterns and hidden meanings",
-      isolated: "The Isolated - Disconnected from the ordinary world",
-      aware: "The Aware - Conscious of forces others cannot see",
-      lost: "The Lost - Searching for purpose and direction",
-    };
-
-    return descriptions[trait] || "Unknown Classification";
-  }
 }
 
+// Export singleton instance
 module.exports = new OnboardingCommands();

@@ -1,6 +1,6 @@
 // ========================================
 // FILE: src/events/interactionCreate.js
-// PURPOSE: Complete interaction handler with full Observer system support - FINAL VERSION
+// PURPOSE: Complete interaction handler with full Observer system support - FULLY FIXED
 // ========================================
 
 const timeBasedService = require("../services/timeBasedMessages");
@@ -36,17 +36,19 @@ module.exports = async (interaction) => {
   } catch (error) {
     logger.error("Error handling interaction:", error);
 
+    // FIXED: Better error response handling
     try {
       const errorMessage =
         "❌ *An error occurred while processing your interaction.*";
 
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: errorMessage, ephemeral: true });
-      } else {
+      if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: errorMessage, ephemeral: true });
+      } else if (!interaction.followUpSent) {
+        await interaction.followUp({ content: errorMessage, ephemeral: true });
       }
     } catch (replyError) {
       logger.error("Failed to send error message:", replyError);
+      // Don't throw - just log and continue
     }
   }
 };
@@ -98,15 +100,23 @@ async function handleButtonInteraction(interaction) {
       await onboardingSystem.handleObserverModalButton(interaction);
     }
 
+    // Handle direct Observer modal trigger button (new streamlined flow)
+    else if (customId.startsWith("show_direct_observer_modal_")) {
+      await onboardingSystem.handleDirectObserverModalButton(interaction);
+    }
+
     // Handle any other custom interactions
     else {
       console.log(`   Unhandled button interaction: ${customId}`);
       logger.debug(`Unhandled button interaction: ${customId}`);
 
-      await interaction.reply({
-        content: "Unknown button interaction. Please try again.",
-        flags: 64,
-      });
+      // FIXED: Only reply if not already replied
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "Unknown button interaction. Please try again.",
+          flags: 64,
+        });
+      }
     }
   } catch (error) {
     logger.error("Error handling button interaction:", error);
@@ -117,22 +127,14 @@ async function handleButtonInteraction(interaction) {
       error: error.message,
     });
 
-    try {
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({
-          content:
-            "An error occurred processing your interaction. Please try again.",
-          flags: 64,
-        });
-      }
-    } catch (replyError) {
-      logger.error("Failed to send button error message:", replyError);
-    }
+    // FIXED: Better error handling - DON'T reply if already handled
+    // The individual methods should handle their own error responses
+    // Only log the error, don't try to send additional replies
   }
 }
 
 /**
- * FIXED: Handles all modal submission events with complete Observer support
+ * FIXED: Handles all modal submission events with better error handling
  * @param {Object} interaction - Discord modal interaction
  */
 async function handleModalSubmit(interaction) {
@@ -154,15 +156,24 @@ async function handleModalSubmit(interaction) {
       await onboardingSystem.handleCustomObserverModal(interaction);
     }
 
+    // Handle direct Observer modal (new streamlined flow)
+    else if (customId.startsWith("direct_observer_modal_")) {
+      console.log(`   Processing direct Observer modal`);
+      await onboardingSystem.handleDirectObserverModal(interaction);
+    }
+
     // Handle any other modal submissions
     else {
       console.log(`   Unhandled modal submission: ${customId}`);
       logger.debug(`Unhandled modal submission: ${customId}`);
 
-      await interaction.reply({
-        content: "Unknown modal submission. Please try again.",
-        flags: 64,
-      });
+      // FIXED: Only reply if not already replied
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "Unknown modal submission. Please try again.",
+          flags: 64,
+        });
+      }
     }
   } catch (error) {
     logger.error("Error handling modal submission:", error);
@@ -173,6 +184,7 @@ async function handleModalSubmit(interaction) {
       error: error.message,
     });
 
+    // FIXED: Better error handling - only reply if not already handled
     try {
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({
@@ -183,6 +195,7 @@ async function handleModalSubmit(interaction) {
       }
     } catch (replyError) {
       logger.error("Failed to send modal error message:", replyError);
+      // Don't throw - just log and continue
     }
   }
 }
@@ -196,10 +209,27 @@ async function handleSlashCommand(interaction) {
     `Slash command: ${interaction.commandName} by ${interaction.user.username}`
   );
 
-  // Currently no slash commands implemented
-  // This is here for future expansion
-  await interaction.reply({
-    content: "*This command is not yet implemented.*",
-    ephemeral: true,
-  });
+  try {
+    // Currently no slash commands implemented
+    // This is here for future expansion
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: "*This command is not yet implemented.*",
+        ephemeral: true,
+      });
+    }
+  } catch (error) {
+    logger.error("Error handling slash command:", error);
+
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "An error occurred processing the command.",
+          ephemeral: true,
+        });
+      }
+    } catch (replyError) {
+      logger.error("Failed to send slash command error message:", replyError);
+    }
+  }
 }
